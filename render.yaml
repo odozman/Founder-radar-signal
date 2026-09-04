@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: founder-radar-signal
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: ALERT_TOKEN
+        sync: false
+      - key: SIGNAL_THRESHOLD
+        value: "5"
