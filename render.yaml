@@ -3,11 +3,23 @@ services:
     name: founder-radar-signal
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn --workers 1 --threads 4 --timeout 120 app:app
     envVars:
-      - key: SLACK_WEBHOOK_URL
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_CHANNEL_ID
+        value: "C0BV4HMSEBW"
+      - key: SERPER_API_KEY
         sync: false
       - key: ALERT_TOKEN
         sync: false
-      - key: SIGNAL_THRESHOLD
-        value: "5"
+      - key: POLL_HOURS
+        value: "8"
+      - key: DATABASE_PATH
+        value: "state.db"
+      - key: YC_DIRECTORY_URL
+        value: "https://www.ycombinator.com/companies"
+      - key: SPEEDRUN_URL
+        value: "https://speedrun.a16z.com/"
+      - key: SPEEDRUN_NAME
+        value: "a16z Speedrun"
