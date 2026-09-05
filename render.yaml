@@ -8,18 +8,18 @@ services:
       - key: SLACK_BOT_TOKEN
         sync: false
       - key: SLACK_CHANNEL_ID
-        value: "C0BV4HMSEBW"
+        sync: false
       - key: SERPER_API_KEY
         sync: false
       - key: ALERT_TOKEN
         sync: false
       - key: POLL_HOURS
         value: "8"
+      - key: BASELINE_ON_FIRST_RUN
+        value: "true"
       - key: DATABASE_PATH
-        value: "state.db"
+        value: "/var/data/state.db"
       - key: YC_DIRECTORY_URL
         value: "https://www.ycombinator.com/companies"
       - key: SPEEDRUN_URL
-        value: "https://speedrun.a16z.com/"
-      - key: SPEEDRUN_NAME
-        value: "a16z Speedrun"
+        value: "https://speedrun.a16z.com/companies"
