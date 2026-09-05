@@ -1,59 +1,60 @@
 # Founder Radar Signal
 
-Founder Radar Signal monitors startup-founder launch signals and sends incremental alerts to Slack.
+A personal Slack monitor for early YC and a16z Speedrun founder-launch signals.
 
 ## What it monitors
 
-1. Y Combinator company directory
-2. a16z Speedrun directory
-3. X posts indexed by Google
-4. LinkedIn posts indexed by Google
+1. **Y Combinator company directory** — source of truth for confirmed YC companies.
+2. **a16z Speedrun company directory** — source of truth for confirmed Speedrun companies. Important: public evidence indicates Speedrun is an a16z program, not a Y Combinator sub-program, so this implementation labels it separately rather than claiming it is YC-owned.
+3. **X / Twitter** — founder posts and launch announcements mentioning YC/Speedrun.
+4. **LinkedIn** — founder posts and company-page signals mentioning YC/Speedrun.
 
-The monitor runs every 8 hours by default and stores previously seen source URLs in SQLite so the same signal is not repeatedly alerted.
+The monitor polls every 8 hours by default and uses SQLite to persist company and social-signal state, preventing repeat alerts.
 
-### Important note about Speedrun
+## Early YC detection
 
-There is not currently an official YC program directory called Speedrun in this implementation. The configured Speedrun source is **a16z Speedrun**. Change `SPEEDRUN_URL` and `SPEEDRUN_NAME` if the intended Speedrun directory is different.
+The key rule is **founder-first detection**: a founder announcement can trigger before YC's own announcement. The social result is reconciled against the official YC directory and a search for official YC social mentions. If the company is not yet in the directory and no matching official social announcement is found, the Slack alert is marked:
+
+`Founder announced / not yet officially announced by program`
+
+This is deliberately different from simply watching YC's social account.
 
 ## Architecture
 
 - Python + Flask
-- SQLite state store
-- Requests + BeautifulSoup for public-page retrieval
-- Serper for Google-indexed X/LinkedIn discovery
-- Slack Bot API for channel alerts
-- Background 8-hour polling loop
-- Pond-compatible `/manifest` and authenticated `/runs` endpoints
+- SQLite persistent state
+- BeautifulSoup + requests for public directories
+- Serper for indexed X/LinkedIn discovery
+- Slack `chat.postMessage`
+- Background scheduler with configurable polling interval
+- Pond-compatible Protocol V1 `/manifest` and `/runs` endpoints
+- Modular source functions so additional social sources can be added later
 
-## Slack alert format
+## Files
 
-Each new signal includes:
-
-- Company
-- Founder
-- Batch, when detected
-- Source
-- Status
-- Description/snippet
-- Original post URL
-- Detection timestamp
+- `app.py` — Flask service, scheduler, orchestration and Pond endpoints
+- `sources.py` — YC, Speedrun, X and LinkedIn discovery/reconciliation
+- `state.py` — persistent SQLite state and deduplication
+- `slack_client.py` — Slack alert formatting and delivery
+- `render.yaml` — Render deployment configuration
+- `requirements.txt` — pinned Python dependencies
 
 ## Environment variables
 
-Required for full operation:
+Required for full monitoring:
 
-- `SLACK_BOT_TOKEN`: Slack bot token with permission to post in the target channel
-- `SLACK_CHANNEL_ID`: destination channel ID, e.g. `C0BV4HMSEBW`
-- `SERPER_API_KEY`: API key for Google-indexed social discovery
-- `ALERT_TOKEN`: shared secret for protected scan/Pond endpoints
+- `SLACK_BOT_TOKEN` — Slack bot token (`xoxb-...`)
+- `SLACK_CHANNEL_ID` — destination channel ID or DM conversation ID
+- `SERPER_API_KEY` — Serper API key for indexed X/LinkedIn discovery
+- `ALERT_TOKEN` — secret protecting manual/Pond scan endpoints
 
 Optional:
 
-- `POLL_HOURS` default `8`
-- `DATABASE_PATH` default `state.db`
-- `YC_DIRECTORY_URL` default `https://www.ycombinator.com/companies`
-- `SPEEDRUN_URL` default `https://speedrun.a16z.com/`
-- `SPEEDRUN_NAME` default `a16z Speedrun`
+- `POLL_HOURS` — default `8`
+- `DATABASE_PATH` — default `state.db`
+- `YC_DIRECTORY_URL` — default `https://www.ycombinator.com/companies`
+- `SPEEDRUN_URL` — default `https://speedrun.a16z.com/companies`
+- `BASELINE_ON_FIRST_RUN` — default `true`; first scan seeds the directory without flooding Slack with historical companies
 
 ## Local setup
 
@@ -61,7 +62,7 @@ Optional:
 git clone https://github.com/odozman/Founder-radar-signal.git
 cd Founder-radar-signal
 python -m venv .venv
-# Windows: .venv\\Scripts\\activate
+# Windows PowerShell: .venv\\Scripts\\Activate.ps1
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -72,52 +73,75 @@ Set the environment variables, then run:
 python app.py
 ```
 
-Health check:
+The service exposes:
 
-```text
-GET /health
-```
+- `GET /health` — health/config status
+- `POST /scan` — manually trigger an incremental scan
+- `GET /manifest` — Pond Protocol V1 manifest
+- `POST /runs` — Pond Protocol V1 action execution
 
-Manual scan:
+## Slack setup — single workspace
 
-```text
-POST /scan
-```
+1. Open Slack's app management page and create a new app **From scratch**.
+2. Give it a name such as `Founder Radar Signal` and select the single target workspace.
+3. Under **OAuth & Permissions**, add the bot scope `chat:write`.
+4. Install/reinstall the app to the workspace and copy the **Bot User OAuth Token**. Keep it secret.
+5. Create or choose the destination channel.
+6. Invite the bot to that channel.
+7. Copy the channel ID from Slack and set `SLACK_CHANNEL_ID`.
+8. Set `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` in the runtime environment.
+9. Run the service and call `/health`. It should report `slack_configured: true`.
+10. Run `POST /scan` once. A newly discovered signal will be posted to the configured channel.
 
-## Slack setup
-
-1. Create a Slack app in the Slack API dashboard.
-2. Add a bot user.
-3. Give the bot permission to send messages (`chat:write`).
-4. Install the app into the workspace.
-5. Invite the bot to the destination channel.
-6. Put the bot token in `SLACK_BOT_TOKEN`.
-7. Set `SLACK_CHANNEL_ID` to the destination channel ID.
-8. Deploy the service and call `/health` to confirm Slack configuration is detected.
+For a DM, use the Slack conversation/DM ID as `SLACK_CHANNEL_ID`.
 
 ## Render deployment
 
-The included `render.yaml` is configured for a Python web service with one Gunicorn worker. One worker is intentional because the polling loop is stateful and should not run concurrently in multiple web workers.
+The included `render.yaml` is a single-worker Python web service. This matters because the scheduler is stateful. For production, attach persistent storage or migrate the SQLite state to PostgreSQL so redeploys do not erase deduplication state.
 
-For production persistence, use a Render persistent disk or move the `seen` and `companies` tables to PostgreSQL. Without persistent storage, a restart/redeploy can reset deduplication state.
+Set these Render environment variables:
 
-## Pond
+- `SLACK_BOT_TOKEN`
+- `SLACK_CHANNEL_ID`
+- `SERPER_API_KEY`
+- `ALERT_TOKEN`
+- `POLL_HOURS=8`
+- `DATABASE_PATH=/var/data/state.db` if using a mounted persistent disk
 
-The application exposes:
+## Pond integration
 
-- `GET /manifest`
-- `POST /runs`
+The service implements the Pond marketplace-agent Protocol V1 shape:
 
-`POST /runs` accepts `Authorization: Bearer <ALERT_TOKEN>` and can execute a scan using `{\"action\":\"scan\"}`.
+- public `GET /manifest`
+- authenticated `POST /runs`
+- `X-Agent-Protocol-Version: 1.0`
+- `Authorization: Bearer <POND_ACCESS_KEY>` (the deployment can use the same value as `ALERT_TOKEN`)
+- action ID: `scan_now`
 
-These endpoints are intended to make the monitor easy to connect to an agent infrastructure such as Pond. Pond registration and health verification are not claimed as complete until the deployed public HTTPS endpoint is registered and tested with a real Pond access key.
+The repository is **Pond-ready**, but Pond registration is an external account/deployment step and must not be claimed as completed until the deployed HTTPS endpoint is registered and successfully health-checked in Pond.
 
-## Early-signal logic
+## Detection limitations
 
-The social discovery layer searches for common founder language such as YC batch references, joining Y Combinator, acceptance announcements, and Speedrun references. New source URLs are deduplicated before Slack delivery.
+X and LinkedIn do not provide unrestricted public historical search APIs. This MVP uses Serper's indexed results, so detection depends on what search engines have indexed. For production-grade coverage, a compliant direct API or social-data provider can replace the discovery functions without changing the scheduler/state/Slack/Pond layers.
 
-The current implementation is an MVP. For higher-confidence production detection, add direct X/LinkedIn APIs or a compliant social-data provider, then reconcile each social company against structured YC company records instead of relying only on page-level fingerprints.
+The implementation intentionally avoids claiming an early signal is confirmed by YC. Directory presence is the confirmation source of truth.
 
-## Example signal
+## Example Slack alert
 
-A public LinkedIn announcement from Vestris founders Aahil Valliani and Joshua Tang referenced joining Y Combinator S26 and building Vestris. This is the type of founder-first signal the bot is designed to surface before relying solely on an official directory update.
+```text
+🔥 EARLY YC SIGNAL — Founder Announced Before YC
+
+Company: Example AI
+Founder: Jane Doe
+Batch: YCS26
+Source: X
+Status: Founder announced / not yet officially announced by program
+
+Description: We got into YC S26! Excited to start building...
+Original post / profile: https://x.com/example/status/123
+Detected: 2026-09-05 10:00 UTC
+```
+
+## License
+
+MIT
